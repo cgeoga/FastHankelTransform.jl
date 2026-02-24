@@ -40,7 +40,7 @@ function nufht!(gs, nu, rs, cs, ws;
         return gs
     end
 
-    boxes = generate_boxes(
+    (local_boxes, asymptotic_boxes, direct_boxes) = generate_boxes(
         rs, ws, z_split, K_loc; 
         max_levels=max_levels, min_dim_prod=min_dim_prod
         )
@@ -52,44 +52,37 @@ function nufht!(gs, nu, rs, cs, ws;
     real_buffer_2 = zeros(Float64, n)
     cheb_buffer     = zeros(Float64, K_loc+1)
     bessel_buffer_1 = zeros(Float64, K_loc+1)
-    bessel_buffer_2 = zeros(
-        Float64, K_loc+1+div(abs(nu),2)+isodd(nu)
-        )
+    bessel_buffer_2 = zeros(Float64, K_loc+1+div(abs(nu),2)+isodd(nu))
 
-    # add contributions of all boxes
-    for (box_set, add_box!) in zip(boxes, (
-        (gs, nu, rs, cs, ws) -> add_loc!(
-            gs, nu, rs, cs, ws, K=K_loc,
-            cheb_buffer=cheb_buffer, 
-            bessel_buffer_1=bessel_buffer_1, 
-            bessel_buffer_2=bessel_buffer_2
-            ), 
-        (gs, nu, rs, cs, ws) -> add_asy!(
-            gs, nu, rs, cs, ws, asy_coef, K=K_asy, tol=tol,
-            # TODO (pb 2/10/24): ask FINUFFT.jl to accept SubArrays
-            # in_buffer=view(in_buffer, 1:length(rs)),
-            # out_buffer=view(out_buffer, 1:length(ws)),
-            real_buffer_1=view(real_buffer_1, 1:length(ws)),
-            real_buffer_2=view(real_buffer_2, 1:length(ws))
-            ),
-        add_dir!
-        ))
-        for (i0b, i1b, j0b, j1b) in box_set
-            add_box!(
-                view(gs, i0b:i1b), abs(nu),
-                rs[j0b:j1b], # view(rs, j0b:j1b), 
-                view(cs, j0b:j1b), 
-                ws[i0b:i1b]  # view(ws, i0b:i1b)
-                )
-        end
+    # local interactions:
+    for (i0b, i1b, j0b, j1b) in local_boxes
+      add_loc!(view(gs, i0b:i1b), abs(nu), unsafe_slice(rs, j0b:j1b), 
+               view(cs, j0b:j1b), unsafe_slice(ws, i0b:i1b), 
+               K=K_loc, cheb_buffer=cheb_buffer, bessel_buffer_1=bessel_buffer_1, 
+               bessel_buffer_2=bessel_buffer_2)
     end
 
-    if nu < 0 && isodd(nu)
-        # use J_{-n} = (-1)^n J_n for negative orders
-        gs .*= -1
+    # asymptotic interactions:
+    for (i0b, i1b, j0b, j1b) in asymptotic_boxes
+      add_asy!(view(gs, i0b:i1b), abs(nu), unsafe_slice(rs, j0b:j1b), 
+               view(cs, j0b:j1b), unsafe_slice(ws, i0b:i1b), 
+               asy_coef, K=K_asy, tol=tol,
+               in_buffer=unsafe_slice(in_buffer,   j0b:j1b),
+               out_buffer=unsafe_slice(out_buffer, i0b:i1b),
+               real_buffer_1=view(real_buffer_1, i0b:i1b),
+               real_buffer_2=view(real_buffer_2, i0b:i1b))
     end
 
-    return gs
+    # direct interactions:
+    for (i0b, i1b, j0b, j1b) in direct_boxes
+      add_dir!(view(gs, i0b:i1b), abs(nu), unsafe_slice(rs, j0b:j1b), 
+               view(cs, j0b:j1b), unsafe_slice(ws, i0b:i1b))
+      
+    end
+
+    # use J_{-n} = (-1)^n J_n for negative orders
+    (nu < 0 && isodd(nu)) && (gs .*= -1)
+    gs
 end
 
 function setup_nufht(nu, tol; z_split=nothing, K_asy=nothing, K_loc=nothing)

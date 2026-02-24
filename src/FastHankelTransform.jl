@@ -10,6 +10,8 @@ module FastHankelTransform
     const nltols    = 4:15 # negative log tolerances
     const max_K_asy = 10
 
+    include("utils.jl")
+
     include("bounds.jl")
    
     # read (or generate) the pre-computed tables.
